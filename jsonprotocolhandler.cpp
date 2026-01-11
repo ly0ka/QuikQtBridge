@@ -1,8 +1,9 @@
 #include "jsonprotocolhandler.h"
-#include <QTimer>
+
+#include <QThread>
 
 JsonProtocolHandler::JsonProtocolHandler(QTcpSocket *sock,  QString logFileName, QObject *parent)
-    : QObject(parent), logf(0), logts(0)//, win1251(QTextCodec::codecForName("Windows-1251"))
+    : QObject(parent), logf(0), logts(0)
 {
     if(!logFileName.isEmpty())
     {
@@ -24,12 +25,13 @@ JsonProtocolHandler::JsonProtocolHandler(QTcpSocket *sock,  QString logFileName,
     connect(socket, SIGNAL(disconnected()), this, SLOT(disconnected()));
 }
 
-void JsonProtocolHandler::forceDisconnect()
+JsonProtocolHandler::~JsonProtocolHandler()
 {
-    qDebug() << ("JsonProtocolHandler::forceDisconnect");
-    end(true);
-    disconnected();
+    qDebug() << "Socket deleted";
+    socket->deleteLater();
+    socket=0;
 }
+
 
 void JsonProtocolHandler::safeAbort()
 {
@@ -45,31 +47,13 @@ void JsonProtocolHandler::safeAbort()
     */
 }
 
-void JsonProtocolHandler::disconnected()
+void JsonProtocolHandler::forceDisconnect()
 {
-    emit finished();
+    qDebug() << ("JsonProtocolHandler::forceDisconnect");
+    end(true);
+    disconnected();
 }
 
-int JsonProtocolHandler::getSocketDescriptor()
-{
-    if(socket)
-        return socket->socketDescriptor();
-    return 0;
-}
-
-QString JsonProtocolHandler::peerAddressPort()
-{
-    if(!socket)
-        return QString();
-    return QString("%1:%2").arg(socket->peerAddress().toString()).arg(socket->peerPort());
-}
-
-JsonProtocolHandler::~JsonProtocolHandler()
-{
-    qDebug() << "Socket deleted";
-    socket->deleteLater();
-    socket=0;
-}
 
 void JsonProtocolHandler::sendReq(int id, QJsonValue data, bool showInLog)
 {
@@ -181,6 +165,18 @@ void JsonProtocolHandler::end(bool force)
     else
         if(force)
             socket->abort();
+}
+
+
+bool JsonProtocolHandler::socketValid()
+{
+    if(weEnded)
+        return false;
+    if(!socket || !socket->isOpen())
+        return false;
+    if(socket->state() != QAbstractSocket::ConnectedState )
+        return false;
+    return true;
 }
 
 void JsonProtocolHandler::processBuffer()
@@ -307,22 +303,13 @@ void JsonProtocolHandler::processBuffer()
     }
 }
 
-bool JsonProtocolHandler::socketValid()
-{
-    if(weEnded)
-        return false;
-    if(!socket || !socket->isOpen())
-        return false;
-    if(socket->state() != QAbstractSocket::ConnectedState )
-        return false;
-    return true;
-}
 
 void JsonProtocolHandler::logIncoming(const QByteArray &msg)
 {
     if(!logts)
         return;
-    *logts << Qt::endl << "<--" << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss") << Qt::endl;
+    *logts << Qt::endl << "<--" << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz")
+           << '[' << QThread::currentThreadId() << ']'<< Qt::endl;
     *logts << QString::fromLocal8Bit(msg) << Qt::endl;
     logts->flush();
 }
@@ -331,10 +318,13 @@ void JsonProtocolHandler::logOutgoing(const QByteArray &msg)
 {
     if(!logts)
         return;
-    *logts << Qt::endl << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss") << "-->" << Qt::endl;
+    *logts << Qt::endl
+           << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz")
+           << '[' << QThread::currentThreadId() << ']' << "-->" << Qt::endl;
     *logts << QString::fromLocal8Bit(msg) << Qt::endl;
     logts->flush();
 }
+
 
 void JsonProtocolHandler::readyRead()
 {
@@ -366,29 +356,13 @@ void JsonProtocolHandler::readyRead()
     }
 }
 
+void JsonProtocolHandler::disconnected()
+{
+    emit finished();
+}
+
 void JsonProtocolHandler::errorThunk(QAbstractSocket::SocketError err)
 {
     safeAbort();
     emit error(err);
-}
-
-QHostAddress JsonProtocolHandler::peerAddress()
-{
-    if(!socket)
-        return QHostAddress();
-    return socket->peerAddress();
-}
-
-quint16 JsonProtocolHandler::peerPort()
-{
-    if(!socket)
-        return 0;
-    return socket->peerPort();
-}
-
-QString JsonProtocolHandler::lastErrorString()
-{
-    if(!socket)
-        return "There is no socket";
-    return socket->errorString();
 }

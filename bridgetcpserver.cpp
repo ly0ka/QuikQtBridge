@@ -1,9 +1,13 @@
 #include "bridgetcpserver.h"
-#include <QRegularExpression>
+
+#include <QCoreApplication>
+#include <QDateTime>
+#include <QThread>
 
 #define ALLOW_LOCAL_IP
 
 BridgeTCPServer * BridgeTCPServer::g_server = nullptr;
+
 struct FastCallbackFunctionData
 {
     ConnectionData *cd;
@@ -14,16 +18,12 @@ struct FastCallbackFunctionData
 };
 
 BridgeTCPServer::BridgeTCPServer(QObject *parent)
-    : QTcpServer(parent), logf(nullptr), logts(nullptr)
+    : QTcpServer(parent), logf(nullptr), logts(nullptr), logPathConnections(0)
 {
     g_server = this;
     connect(this, SIGNAL(acceptError(QAbstractSocket::SocketError)), this, SLOT(serverError(QAbstractSocket::SocketError)));
     qqBridge->registerCallback(this, "OnStop");
     activeCallbacks.append("OnStop");
-    qqBridge->registerCallback(this, "OnParam");
-    activeCallbacks.append("OnParam");
-    qqBridge->registerCallback(this, "OnQuote");
-    activeCallbacks.append("OnQuote");
 }
 
 BridgeTCPServer::~BridgeTCPServer()
@@ -31,14 +31,8 @@ BridgeTCPServer::~BridgeTCPServer()
     while(!m_connections.isEmpty())
     {
         ConnectionData *cd = m_connections.takeLast();
-        paramSubscriptions.clearAllSubscriptions(cd);
         delete cd;
     }
-}
-
-void BridgeTCPServer::setAllowedIPs(const QStringList &aips)
-{
-    m_allowedIps = aips;
 }
 
 void BridgeTCPServer::setLogPathPrefix(QString lpp)
@@ -60,6 +54,43 @@ void BridgeTCPServer::setDebugLogPathPrefix(QString lpp)
         else
             delete tmpf;
     }
+}
+
+void BridgeTCPServer::setAllowedIPs(const QStringList &aips)
+{
+    m_allowedIps = aips;
+}
+
+
+void BridgeTCPServer::sendStdoutLine(QString line)
+{
+#ifdef QT_DEBUG
+    qDebug() << line;
+#endif
+    if(logts)
+    {
+        *logts << Qt::endl << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz") << " OUT: " << line;
+        logts->flush();
+    }
+}
+
+void BridgeTCPServer::sendStderrLine(QString line)
+{
+#ifdef QT_DEBUG
+    qDebug() << line;
+#endif
+    if(logts)
+    {
+        *logts << Qt::endl << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz") << " ERR: " << line;
+        logts->flush();
+    }
+}
+
+void BridgeTCPServer::clearFastCallbackData(void *data)
+{
+    FastCallbackFunctionData *fcfdata = reinterpret_cast<FastCallbackFunctionData *>(data);
+    if(fcfdata)
+        delete fcfdata;
 }
 
 void BridgeTCPServer::callbackRequest(QString name, const QVariantList &args, QVariant &vres)
@@ -89,40 +120,6 @@ void BridgeTCPServer::callbackRequest(QString name, const QVariantList &args, QV
         qApp->quit();
         vres = (int)100;
     }
-    if(name == "OnParam")
-    {
-        QString cls = args[0].toString();
-        QString sec = args[1].toString();
-        QMetaObject::invokeMethod(this, "secParamsUpdate", Qt::QueuedConnection,
-                                  Q_ARG(QString, cls),
-                                  Q_ARG(QString, sec));
-        /*
-        SecSubs *s = paramSubscriptions.findSecuritySubscriptions(cls, sec);
-        if(s)
-        {
-            QMetaObject::invokeMethod(this, "secParamsUpdate", Qt::QueuedConnection,
-                                      Q_ARG(QString, cls),
-                                      Q_ARG(QString, sec));
-        }
-        */
-    }
-    if(name == "OnQuote")
-    {
-        QString cls = args[0].toString();
-        QString sec = args[1].toString();
-        QMetaObject::invokeMethod(this, "secQuotesUpdate", Qt::QueuedConnection,
-                                  Q_ARG(QString, cls),
-                                  Q_ARG(QString, sec));
-        /*
-        SecSubs *s = paramSubscriptions.findSecuritySubscriptions(cls, sec);
-        if(s)
-        {
-            QMetaObject::invokeMethod(this, "secQuotesUpdate", Qt::QueuedConnection,
-                                      Q_ARG(QString, cls),
-                                      Q_ARG(QString, sec));
-        }
-        */
-    }
 }
 
 void BridgeTCPServer::fastCallbackRequest(void *data, const QVariantList &args, QVariant &res)
@@ -138,36 +135,6 @@ void BridgeTCPServer::fastCallbackRequest(void *data, const QVariantList &args, 
     }
 }
 
-void BridgeTCPServer::clearFastCallbackData(void *data)
-{
-    FastCallbackFunctionData *fcfdata = reinterpret_cast<FastCallbackFunctionData *>(data);
-    if(fcfdata)
-        delete fcfdata;
-}
-
-void BridgeTCPServer::sendStdoutLine(QString line)
-{
-#ifdef QT_DEBUG
-    qDebug() << line;
-#endif
-    if(logts)
-    {
-        *logts << Qt::endl << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss") << "OUT: " << line;
-        logts->flush();
-    }
-}
-
-void BridgeTCPServer::sendStderrLine(QString line)
-{
-#ifdef QT_DEBUG
-    qDebug() << line;
-#endif
-    if(logts)
-    {
-        *logts << Qt::endl << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss") << "ERR: " << line;
-        logts->flush();
-    }
-}
 
 bool BridgeTCPServer::ipAllowed(QString ip)
 {
@@ -185,16 +152,6 @@ bool BridgeTCPServer::ipAllowed(QString ip)
     }
     sendStdoutLine(QString("IP disabled"));
     return false;
-}
-
-void BridgeTCPServer::cacheSecClasses()
-{
-    if(secClasses.isEmpty())
-    {
-        QVariantList args, res;
-        qqBridge->invokeMethod("getClassesList", args, res, this);
-        secClasses = res[0].toString().split(",", Qt::SkipEmptyParts);
-    }
 }
 
 ConnectionData *BridgeTCPServer::getCDByProtoPtr(JsonProtocolHandler *p)
@@ -224,359 +181,6 @@ void BridgeTCPServer::sendError(ConnectionData *cd, int id, int errcode, QString
         cd->proto->sendAns(id, errObj, log);
 }
 
-void BridgeTCPServer::processExtendedRequests(ConnectionData *cd, int id, QString method, QJsonObject &jobj)
-{
-    sendStdoutLine(QString("BridgeTCPServer::processExtendedRequests(\"%1\")").arg(method));
-    method = method.toLower();
-    if(method == "loadaccounts")
-        processLoadAccountsRequest(cd, id, jobj);
-    else if(method == "loadclasses")
-        processLoadClassesRequest(cd, id, jobj);
-    else if(method == "loadclasssecurities")
-        processLoadClassSecuritiesRequest(cd, id, jobj);
-    else if(method == "subscribeparamchanges")
-        processSubscribeParamChangesRequest(cd, id, jobj);
-    else if(method == "unsubscribeparamchanges")
-        processUnsubscribeParamChangesRequest(cd, id, jobj);
-    else if(method == "subscribequotes")
-        processSubscribeQuotesRequest(cd, id, jobj);
-    else if(method == "unsubscribequotes")
-        processUnsubscribeQuotesRequest(cd, id, jobj);
-}
-
-void BridgeTCPServer::processLoadAccountsRequest(ConnectionData *cd, int id, QJsonObject &jobj)
-{
-    sendStdoutLine(QString("BridgeTCPServer::processLoadAccountsRequest(%1)").arg(id));
-    QJsonArray filters = jobj.value("filters").toArray();
-    int j, fcnt = filters.count();
-    QVariantList args, res;
-    QVariantMap vmrow;
-    QJsonObject row;
-    QJsonArray table;
-    args << "trade_accounts";
-    qqBridge->invokeMethod("getNumberOf", args, res, this);
-    int i, n = res[0].toInt();
-    bool get;
-    args << 0;
-    for(i=0;i<n;i++)
-    {
-        args[1] = i;
-        qqBridge->invokeMethod("getItem", args, res, this);
-        vmrow = res[0].toMap();
-        get = true;
-        for(j = 0; j < fcnt; j++)
-        {
-            QJsonObject flt = filters.at(j).toObject();
-            if(!flt.contains("key"))
-                continue;
-            QString key = flt.value("key").toString();
-            if(!vmrow.contains(key))
-            {
-                get = false;
-                break;
-            }
-            if(flt.contains("regexp"))
-            {
-                QRegularExpression rexp(flt.value("regexp").toString());
-                QRegularExpressionMatch match = rexp.match(vmrow.value(key).toString());
-                if(!match.hasMatch())
-                {
-                    get = false;
-                    break;
-                }
-            }
-        }
-        if(get)
-        {
-            row = QJsonObject::fromVariantMap(vmrow);
-            table.append(row);
-        }
-    }
-    QJsonObject invRes
-    {
-        {"method", "return"},
-        {"result", table}
-    };
-    cd->proto->sendAns(id, invRes, false);
-}
-
-void BridgeTCPServer::processLoadClassesRequest(ConnectionData *cd, int id, QJsonObject &jobj)
-{
-    sendStdoutLine(QString("BridgeTCPServer::processLoadClassesRequest(%1)").arg(id));
-    QJsonArray clist;
-    cacheSecClasses();
-    clist = QJsonArray::fromStringList(secClasses);
-    QJsonObject invRes
-    {
-        {"method", "return"},
-        {"result", clist}
-    };
-    cd->proto->sendAns(id, invRes, false);
-}
-
-void BridgeTCPServer::processLoadClassSecuritiesRequest(ConnectionData *cd, int id, QJsonObject &jobj)
-{
-    if(!jobj.contains("class"))
-    {
-        sendError(cd, id, 6, "'class' must be specified in loadClassSecurities", true);
-        return;
-    }
-    sendStdoutLine(QString("BridgeTCPServer::processLoadClassSecuritiesRequest(%1)").arg(id));
-    QString cls = jobj.value("class").toString();
-    cacheSecClasses();
-    if(!secClasses.contains(cls, Qt::CaseInsensitive))
-    {
-        sendError(cd, id, 7, QString("Unknown securities class %1").arg(cls), true);
-        return;
-    }
-    QJsonArray filters = jobj.value("filters").toArray();
-    int j, fcnt = filters.count();
-    QVariantList args, res;
-    QVariantMap vmrow;
-    QJsonObject row;
-    QJsonArray table;
-    args << cls;
-    qqBridge->invokeMethod("getClassSecurities", args, res, this);
-    QStringList allSecs = res[0].toString().split(",", Qt::SkipEmptyParts);
-    int i, n = allSecs.count();
-    bool get;
-    args << QString();
-    for(i=0;i<n;i++)
-    {
-        args[1] = allSecs[i];
-        qqBridge->invokeMethod("getSecurityInfo", args, res, this);
-        vmrow = res[0].toMap();
-        get = true;
-        for(j = 0; j < fcnt; j++)
-        {
-            QJsonObject flt = filters.at(j).toObject();
-            if(!flt.contains("key"))
-                continue;
-            QString key = flt.value("key").toString();
-            if(!vmrow.contains(key))
-            {
-                get = false;
-                break;
-            }
-            if(flt.contains("regexp"))
-            {
-                QRegularExpression rexp(flt.value("regexp").toString());
-                QRegularExpressionMatch match = rexp.match(vmrow.value(key).toString());
-                if(!match.hasMatch())
-                {
-                    get = false;
-                    break;
-                }
-            }
-        }
-        if(get)
-        {
-            row = QJsonObject::fromVariantMap(vmrow);
-            table.append(row);
-        }
-    }
-    QJsonObject invRes
-    {
-        {"method", "return"},
-        {"result", table}
-    };
-    cd->proto->sendAns(id, invRes, false);
-}
-
-void BridgeTCPServer::processSubscribeParamChangesRequest(ConnectionData *cd, int id, QJsonObject &jobj)
-{
-    if(!jobj.contains("class"))
-    {
-        sendError(cd, id, 8, "'class' must be specified in subscribeParamChanges", true);
-        return;
-    }
-    sendStdoutLine(QString("BridgeTCPServer::processSubscribeParamChangesRequest(%1)").arg(id));
-    QString cls = jobj.value("class").toString();
-    cacheSecClasses();
-    if(!secClasses.contains(cls, Qt::CaseInsensitive))
-    {
-        sendError(cd, id, 7, QString("Unknown securities class %1").arg(cls), true);
-        return;
-    }
-    if(!jobj.contains("security"))
-    {
-        sendError(cd, id, 9, "'security' must be specified in subscribeParamChanges", true);
-        return;
-    }
-    QString sec = jobj.value("security").toString();
-    if(!jobj.contains("param"))
-    {
-        sendError(cd, id, 10, "'param' must be specified in subscribeParamChanges", true);
-        return;
-    }
-    QString par = jobj.value("param").toString();
-    ParamSubs *p=paramSubscriptions.findParamSubscriptions(cls, sec, par);
-    if(p)
-    {
-        if(p->hasConsumer(cd)) //p->consumers.contains(cd))
-        {
-            sendError(cd, id, 11, QString("You already subscribed %1/%2/%3").arg(cls, sec, par), true);
-            return;
-        }
-    }
-    else
-    {
-        QVariantList args, res;
-        args << cls << sec << par;
-        qqBridge->invokeMethod("ParamRequest", args, res, this);
-        if(res[0].toBool())
-            sendStderrLine("ParamRequest succesfully finished");
-        else
-            sendStderrLine("ParamRequest failed");
-    }
-    sendStderrLine("We are ready to add subscription");
-    paramSubscriptions.addConsumer(cd, cls, sec, par, id);
-    QJsonObject subsRes
-    {
-        {"method", "return"},
-        {"result", true}
-    };
-    cd->proto->sendAns(id, subsRes, false);
-    secParamsUpdate(cls, sec);
-}
-
-void BridgeTCPServer::processUnsubscribeParamChangesRequest(ConnectionData *cd, int id, QJsonObject &jobj)
-{
-    if(!jobj.contains("class"))
-    {
-        sendError(cd, id, 12, "'class' must be specified in unsubscribeParamChanges", true);
-        return;
-    }
-    sendStdoutLine(QString("BridgeTCPServer::processUnsubscribeParamChangesRequest(%1)").arg(id));
-    QString cls = jobj.value("class").toString();
-    cacheSecClasses();
-    if(!secClasses.contains(cls, Qt::CaseInsensitive))
-    {
-        sendError(cd, id, 7, QString("Unknown securities class %1").arg(cls), true);
-        return;
-    }
-    if(!jobj.contains("security"))
-    {
-        sendError(cd, id, 13, "'security' must be specified in unsubscribeParamChanges", true);
-        return;
-    }
-    QString sec = jobj.value("security").toString();
-    if(!jobj.contains("param"))
-    {
-        sendError(cd, id, 14, "'param' must be specified in unsubscribeParamChanges", true);
-        return;
-    }
-    QString par = jobj.value("param").toString();
-    sendStdoutLine(QString("Try delete subscription to %1/%2/%3").arg(cls, sec, par));
-    paramSubscriptions.delConsumer(cd, cls, sec, par);
-    if(paramSubscriptions.findParamSubscriptions(cls, sec, par))
-        sendStdoutLine(QString("There are some consumers subscribed to %1/%2/%3. Param left in DB").arg(cls, sec, par));
-    else
-    {
-        QVariantList args, res;
-        args << cls << sec << par;
-        qqBridge->invokeMethod("CancelParamRequest", args, res, this);
-        if(res[0].toBool())
-            sendStdoutLine("CancelParamRequest returned true");
-        else
-            sendStderrLine("CancelParamRequest returned false");
-    }
-    QJsonObject usubsRes
-    {
-        {"method", "return"},
-        {"result", true}
-    };
-    cd->proto->sendAns(id, usubsRes, false);
-}
-
-void BridgeTCPServer::processExtendedAnswers(ConnectionData *cd, int id, QString method, QJsonObject &jobj)
-{
-
-}
-
-void BridgeTCPServer::processSubscribeQuotesRequest(ConnectionData *cd, int id, QJsonObject &jobj)
-{
-    if(!jobj.contains("class"))
-    {
-        sendError(cd, id, 15, "'class' must be specified in subscribeQuotes", true);
-        return;
-    }
-    sendStdoutLine(QString("BridgeTCPServer::processSubscribeQuotesRequest(%1)").arg(id));
-    QString cls = jobj.value("class").toString();
-    cacheSecClasses();
-    if(!secClasses.contains(cls, Qt::CaseInsensitive))
-    {
-        sendError(cd, id, 16, QString("Unknown securities class %1").arg(cls), true);
-        return;
-    }
-    if(!jobj.contains("security"))
-    {
-        sendError(cd, id, 17, "'security' must be specified in subscribeQuotes", true);
-        return;
-    }
-    QString sec = jobj.value("security").toString();
-    SecSubs *s = paramSubscriptions.findSecuritySubscriptions(cls, sec);
-    if(s && s->hasQuotesConsumer(cd)) //s->quoteConsumers.contains(cd))
-    {
-        sendError(cd, id, 18, QString("You already subscriped %1/%2 quotes").arg(cls, sec), true);
-        return;
-    }
-    else
-    {
-        QVariantList args, res;
-        args << cls << sec;
-        qqBridge->invokeMethod("Subscribe_Level_II_Quotes", args, res, this);
-        if(!res[0].toBool())
-            sendStderrLine("Subscribe_Level_II_Quotes returned false");
-    }
-    paramSubscriptions.addQuotesConsumer(cd, cls, sec, id);
-    QJsonObject subsRes
-    {
-        {"method", "return"},
-        {"result", true}
-    };
-    cd->proto->sendAns(id, subsRes, false);
-    secQuotesUpdate(cls, sec);
-}
-
-void BridgeTCPServer::processUnsubscribeQuotesRequest(ConnectionData *cd, int id, QJsonObject &jobj)
-{
-    sendStdoutLine(QString("BridgeTCPServer::processUnsubscribeQuotesRequest(%1)").arg(id));
-    if(!jobj.contains("class"))
-    {
-        sendError(cd, id, 19, "'class' must be specified in unsubscribeQuotes", true);
-        return;
-    }
-    QString cls = jobj.value("class").toString();
-    cacheSecClasses();
-    if(!secClasses.contains(cls, Qt::CaseInsensitive))
-    {
-        sendError(cd, id, 20, QString("Unknown securities class %1").arg(cls), true);
-        return;
-    }
-    if(!jobj.contains("security"))
-    {
-        sendError(cd, id, 21, "'security' must be specified in unsubscribeQuotes", true);
-        return;
-    }
-    QString sec = jobj.value("security").toString();
-    paramSubscriptions.delQuotesConsumer(cd, cls, sec);
-    SecSubs *s = paramSubscriptions.findSecuritySubscriptions(cls, sec);
-    if(!s || !s->hasQuotesConsumer()) //s->quoteConsumers.isEmpty())
-    {
-        QVariantList args, res;
-        args << cls << sec;
-        qqBridge->invokeMethod("Unsubscribe_Level_II_Quotes", args, res, this);
-        if(!res[0].toBool())
-            sendStderrLine("Unsubscribe_Level_II_Quotes returned false");
-    }
-    QJsonObject usubsRes
-    {
-        {"method", "return"},
-        {"result", true}
-    };
-    cd->proto->sendAns(id, usubsRes, false);
-}
 
 void BridgeTCPServer::incomingConnection(qintptr handle)
 {
@@ -600,7 +204,8 @@ void BridgeTCPServer::incomingConnection(qintptr handle)
     QString logPath;
     if(!logPathPrefix.isEmpty())
     {
-        logPath = logPathPrefix+sock->peerAddress().toString()+".log";
+        ++logPathConnections;
+        logPath = logPathPrefix+sock->peerAddress().toString()+'-'+QString::number(logPathConnections)+".log";
     }
     ConnectionData *cd = new ConnectionData();
     cd->srv = this;
@@ -612,7 +217,6 @@ void BridgeTCPServer::incomingConnection(qintptr handle)
     connect(cd->proto, SIGNAL(endArrived()), this, SLOT(protoEndArrived()));
     connect(cd->proto, SIGNAL(finished()), this, SLOT(protoFinished()));
     connect(cd->proto, SIGNAL(error(QAbstractSocket::SocketError)), this, SLOT(protoError(QAbstractSocket::SocketError)));
-    //connect(cd->proto, SIGNAL(debugLog(QString)), this, SLOT(debugLog(QString)));
 
     QString msg = QString("New connection from %1 established").arg(cd->peerIp);
     sendStdoutLine(msg);
@@ -782,7 +386,6 @@ void BridgeTCPServer::protoReqArrived(int id, QJsonValue data)
             return;
         }
     }
-    processExtendedRequests(cd, id, method, reqObj);
 }
 
 void BridgeTCPServer::protoAnsArrived(int id, QJsonValue data)
@@ -816,7 +419,6 @@ void BridgeTCPServer::protoAnsArrived(int id, QJsonValue data)
             cd->fcbWaitResult->fastCallbackReturnArrived(cd, id, res);
         return;
     }
-    processExtendedAnswers(cd, id, method, reqObj);
 }
 
 void BridgeTCPServer::protoVerArrived(int ver)
@@ -853,7 +455,6 @@ void BridgeTCPServer::protoFinished()
         QString msg = QString("Connection %1 closed").arg(cd->peerIp);
         sendStdoutLine(msg);
         m_connections.removeAll(cd);
-        paramSubscriptions.clearAllSubscriptions(cd);
         delete cd;
     }
 }
@@ -865,7 +466,6 @@ void BridgeTCPServer::protoError(QAbstractSocket::SocketError err)
     {
         sendStderrLine(QString("Socket error %1: ").arg((int)err)+cd->proto->lastErrorString());
         m_connections.removeAll(cd);
-        paramSubscriptions.clearAllSubscriptions(cd);
         delete cd;
     }
 }
@@ -893,112 +493,9 @@ void BridgeTCPServer::fastCallbackRequestHandler(ConnectionData *cd, int oid, QS
     }
 }
 
-void BridgeTCPServer::secParamsUpdate(QString cls, QString sec)
-{
-    SecSubs *s = paramSubscriptions.findSecuritySubscriptions(cls, sec);
-    if(s)
-    {
-        sendStdoutLine(QString("BridgeTCPServer::secParamsUpdate(%1, %2) -> subscription found").arg(cls, sec));
-        QStringList allParams = s->getParamsList(); //s->params.keys();
-        QString par;
-        ParamSubs *p;
-        int i,j;
-        for(i=0; i<allParams.count();i++)
-        {
-            par = allParams[i];
-            sendStdoutLine(QString("BridgeTCPServer::secParamsUpdate(%1, %2) -> check param %3").arg(cls, sec, par));
-            QVariantList args, res;
-            args << cls << sec << par;
-            qqBridge->invokeMethod("getParamEx2", args, res, this);
-            QVariantMap mres = res[0].toMap();
-            QVariant pval = mres["param_value"];
-            sendStdoutLine(QString("Search subscription for %1").arg(par));
-            p = s->findParamSubscriptions(par);
-            if(!p)
-            {
-                sendStdoutLine(QString("Parameter %1 subscription was canceled").arg(par));
-                continue;
-            }
-            if(pval == p->value)
-            {
-                sendStdoutLine(QString("Value of %1 wasn't changed").arg(par));
-                continue;
-            }
-            sendStdoutLine(QString("Value of %1 was changed. Send it to consumers").arg(par));
-            p->value = pval;
-            QJsonObject subsAns
-            {
-                {"method", "paramChange"},
-                {"class", cls},
-                {"security", sec},
-                {"param", par},
-                {"value", QJsonValue::fromVariant(pval)}
-            };
-            QList<ConnectionData *> consList = p->consumersList(); //p->consumers.keys();
-            for(j=0; j<consList.count(); j++)
-            {
-                ConnectionData *cd = consList.at(j);
-                int id = p->getSubscriptionId(cd); //p->consumers.value(cd);
-                if(id >= 0)
-                    cd->proto->sendReq(id, subsAns, false);
-            }
-        }
-    }
-    //else
-    //    sendStderrLine(QString("BridgeTCPServer::secParamsUpdate(%1, %2) -> subscription not found").arg(cls, sec));
-}
-
-void BridgeTCPServer::secQuotesUpdate(QString cls, QString sec)
-{
-    //bool needStop = true;
-    SecSubs *s = paramSubscriptions.findSecuritySubscriptions(cls, sec);
-    if(s)
-    {
-        sendStdoutLine(QString("BridgeTCPServer::secQuotesUpdate(%1, %2)").arg(cls, sec));
-        if(s->hasQuotesConsumer()) //!s->quoteConsumers.isEmpty())
-        {
-            //needStop = false;
-            QVariantList args, res;
-            args << cls << sec;
-            qqBridge->invokeMethod("getQuoteLevel2", args, res, this);
-            QVariantMap mres = res[0].toMap();
-            QJsonObject subsQAns
-            {
-                {"method", "quotesChange"},
-                {"class", cls},
-                {"security", sec},
-                {"quotes", QJsonValue::fromVariant(mres)}
-            };
-            int i;
-            QList<ConnectionData *> consList = s->getQuotesConsumersList(); //s->quoteConsumers.keys();
-            for(i=0; i<consList.count(); i++)
-            {
-                ConnectionData *cd = consList.at(i);
-                int id = s->getQuotesSubscriptionId(cd); // s->quoteConsumers.value(cd);
-                cd->proto->sendReq(id, subsQAns, false);
-            }
-        }
-        else
-        {
-            sendStderrLine("Quote consumer not found");
-        }
-    }
-    /*
-    if(needStop)
-    {
-        QVariantList args, res;
-        args << cls << sec;
-        qqBridge->invokeMethod("Unsubscribe_Level_II_Quotes", args, res, this);
-        if(!res[0].toBool())
-            sendStderrLine("Unsubscribe_Level_II_Quotes returned false");
-    }
-    */
-}
 
 FastCallbackRequestEventLoop::FastCallbackRequestEventLoop(ConnectionData *rcd, int oid, QString rfname, BridgeTCPServer *s)
-    : cd(rcd), funName(rfname), objId(oid), waitMux(nullptr), srv(s)
-{
-}
+    : cd(rcd), funName(rfname), objId(oid), waitMux(nullptr), srv(s) {}
 
 QVariant FastCallbackRequestEventLoop::sendAndWaitResult(BridgeTCPServer *server, const QVariantList &args)
 {
@@ -1063,6 +560,7 @@ void FastCallbackRequestEventLoop::connectionDataDeleted(ConnectionData *dcd)
     }
 }
 
+
 ConnectionData::~ConnectionData()
 {
     while(!objRefs.isEmpty())
@@ -1076,503 +574,6 @@ ConnectionData::~ConnectionData()
     if(proto)
         delete proto;
 }
-
-ParamSubscriptionsDb::ParamSubscriptionsDb()
-{
-
-}
-
-ParamSubscriptionsDb::~ParamSubscriptionsDb()
-{
-    //Здесь нельзя использовать локер использующий стек,
-    //потому-что он удаляется вместе с мьютексом на выходе из деструктора
-    // sendStdoutLine("ParamSubscriptionsDb::~ParamSubscriptionsDb lock");
-    mutex.lock();
-    QStringList keys = classes.keys();
-    foreach (QString cls, keys)
-    {
-        delete classes.take(cls);
-    }
-    mutex.unlock();
-    // sendStdoutLine("ParamSubscriptionsDb::~ParamSubscriptionsDb unlocked");
-}
-
-void ParamSubscriptionsDb::addConsumer(ConnectionData *cd, QString cls, QString sec, QString param, int id)
-{
-    sendStdoutLine(QString("ParamSubscriptionsDb::addConsumer(%1, %2, %3, %4)").arg(cls, sec, param).arg(id));
-    ClsSubs *c;
-    mutex.lock();
-    {
-        if(classes.contains(cls))
-        {
-            sendStdoutLine("ParamSubscriptionsDb::addConsumer: class already exists");
-            c = classes.value(cls);
-        }
-        else
-        {
-            sendStdoutLine("ParamSubscriptionsDb::addConsumer: create new class");
-            c = new ClsSubs(cls);
-            classes.insert(cls, c);
-        }
-    }
-    mutex.unlock();
-    // sendStdoutLine(QString("ParamSubscriptionsDb::addConsumer(%1, %2, %3, %4): addConsumer to class").arg(cls, sec, param).arg(id));
-    c->addConsumer(cd, sec, param, id);
-}
-
-bool ParamSubscriptionsDb::delConsumer(ConnectionData *cd, QString cls, QString sec, QString param)
-{
-    sendStdoutLine(QString("ParamSubscriptionsDb::delConsumer(%1, %2, %3)").arg(cls, sec, param));
-    mutex.lock();
-    if(classes.contains(cls))
-    {
-        sendStdoutLine(QString("ParamSubscriptionsDb::delConsumer found class %1 in subscriptions").arg(cls));
-        if(classes.value(cls)->delConsumer(cd, sec, param))
-            delete classes.take(cls);
-    }
-    bool res = classes.isEmpty();
-    mutex.unlock();
-    // sendStdoutLine(QString("ParamSubscriptionsDb::delConsumer(%1, %2, %3) unlocked").arg(cls, sec, param));
-    return res;
-}
-
-bool ParamSubscriptionsDb::clearAllSubscriptions(ConnectionData *cd)
-{
-    // sendStdoutLine(QString("ParamSubscriptionsDb::clearAllSubscriptions() lock"));
-    mutex.lock();
-    QStringList toDel = classes.keys();
-    foreach (QString cname, toDel)
-    {
-        ClsSubs *c = classes[cname];
-        if(c->clearAllSubscriptions(cd))
-        {
-            classes.remove(cname);
-            delete c;
-        }
-    }
-    bool res = classes.isEmpty();
-    mutex.unlock();
-    // sendStdoutLine(QString("ParamSubscriptionsDb::clearAllSubscriptions() unlocked"));
-    return res;
-}
-
-ParamSubs *ParamSubscriptionsDb::findParamSubscriptions(QString cls, QString sec, QString param)
-{
-    ParamSubs *res = nullptr;
-    // sendStdoutLine("ParamSubscriptionsDb::findParamSubscriptions lock");
-    mutex.lock();
-    if(classes.contains(cls))
-        res = classes.value(cls)->findParamSubscriptions(sec, param);
-    mutex.unlock();
-    // sendStdoutLine("ParamSubscriptionsDb::findParamSubscriptions unlocked");
-    return res;
-}
-
-SecSubs *ParamSubscriptionsDb::findSecuritySubscriptions(QString cls, QString sec)
-{
-    SecSubs *res = nullptr;
-    // sendStdoutLine("ParamSubscriptionsDb::findSecuritySubscriptions lock");
-    mutex.lock();
-    if(classes.contains(cls))
-        res = classes.value(cls)->findSecuritySubscriptions(sec);
-    mutex.unlock();
-    // sendStdoutLine("ParamSubscriptionsDb::findSecuritySubscriptions unlocked");
-    return res;
-}
-
-void ParamSubscriptionsDb::addQuotesConsumer(ConnectionData *cd, QString cls, QString sec, int id)
-{
-    sendStdoutLine(QString("ParamSubscriptionsDb::addQuotesConsumer(%1, %2, %3)").arg(cls, sec).arg(id));
-    ClsSubs *c;
-    mutex.lock();
-    {
-        if(classes.contains(cls))
-        {
-            sendStdoutLine("ParamSubscriptionsDb::addQuotesConsumer: class already exists");
-            c = classes.value(cls);
-        }
-        else
-        {
-            sendStdoutLine("ParamSubscriptionsDb::addQuotesConsumer: create new class");
-            c = new ClsSubs(cls);
-            classes.insert(cls, c);
-        }
-    }
-    mutex.unlock();
-    // sendStdoutLine("ParamSubscriptionsDb::addQuotesConsumer unlocked");
-    c->addQuotesConsumer(cd, sec, id);
-}
-
-bool ParamSubscriptionsDb::delQuotesConsumer(ConnectionData *cd, QString cls, QString sec)
-{
-    // sendStdoutLine("ParamSubscriptionsDb::delQuotesConsumer lock");
-    mutex.lock();
-    if(classes.contains(cls))
-    {
-        if(classes.value(cls)->delQuotesConsumer(cd, sec))
-            delete classes.take(cls);
-    }
-    bool res = classes.isEmpty();
-    mutex.unlock();
-    // sendStdoutLine("ParamSubscriptionsDb::delQuotesConsumer unlocked");
-    return res;
-}
-
-ClsSubs::~ClsSubs()
-{
-    //Здесь нельзя использовать локер использующий стек,
-    //потому-что он удаляется вместе с мьютексом на выходе из деструктора
-    // sendStdoutLine("ClsSubs::~ClsSubs lock");
-    mutex.lock();
-    QStringList keys = securities.keys();
-    foreach (QString sec, keys)
-    {
-        delete securities.take(sec);
-    }
-    mutex.unlock();
-    // sendStdoutLine("ClsSubs::~ClsSubs unlocked");
-}
-
-void ClsSubs::addConsumer(ConnectionData *cd, QString sec, QString param, int id)
-{
-    sendStdoutLine(QString("ClsSubs#%1::addConsumer(%2, %3, %4)").arg(this->className, sec, param).arg(id));
-    SecSubs *s;
-    mutex.lock();
-    {
-        if(securities.contains(sec))
-        {
-            sendStdoutLine("ParamSubscriptionsDb::addConsumer: security already exists");
-            s = securities.value(sec);
-        }
-        else
-        {
-            sendStdoutLine("ParamSubscriptionsDb::addConsumer: create new security");
-            s = new SecSubs(sec);
-            securities.insert(sec, s);
-        }
-    }
-    mutex.unlock();
-    // sendStdoutLine("ClsSubs::addConsumer unlocked");
-    s->addConsumer(cd, param, id);
-}
-
-bool ClsSubs::delConsumer(ConnectionData *cd, QString sec, QString param)
-{
-    // sendStdoutLine("ClsSubs::delConsumer lock");
-    mutex.lock();
-    if(securities.contains(sec))
-    {
-        sendStdoutLine(QString("ClsSubs::delConsumer found security %1 in subscriptions").arg(sec));
-        if(securities.value(sec)->delConsumer(cd, param))
-            delete securities.take(sec);
-    }
-    bool res = securities.isEmpty();
-    mutex.unlock();
-    // sendStdoutLine("ClsSubs::delConsumer unlocked");
-    return res;
-}
-
-bool ClsSubs::clearAllSubscriptions(ConnectionData *cd)
-{
-    // sendStdoutLine("ClsSubs::clearAllSubscriptions lock");
-    mutex.lock();
-    QStringList toDel = securities.keys();
-    foreach (QString sname, toDel)
-    {
-        SecSubs *s = securities[sname];
-        if(s->clearAllSubscriptions(cd))
-        {
-            securities.remove(sname);
-            delete s;
-        }
-    }
-    bool res = securities.isEmpty();
-    mutex.unlock();
-    // sendStdoutLine("ClsSubs::clearAllSubscriptions unlocked");
-    return res;
-}
-
-ParamSubs *ClsSubs::findParamSubscriptions(QString sec, QString param)
-{
-    ParamSubs *res = nullptr;
-    // sendStdoutLine("ClsSubs::findParamSubscriptions lock");
-    mutex.lock();
-    if(securities.contains(sec))
-        res = securities.value(sec)->findParamSubscriptions(param);
-    mutex.unlock();
-    // sendStdoutLine("ClsSubs::findParamSubscriptions unlocked");
-    return res;
-}
-
-SecSubs *ClsSubs::findSecuritySubscriptions(QString sec)
-{
-    SecSubs *res = nullptr;
-    // sendStdoutLine("ClsSubs::findSecuritySubscriptions lock");
-    mutex.lock();
-    if(securities.contains(sec))
-        res = securities.value(sec);
-    mutex.unlock();
-    // sendStdoutLine("ClsSubs::findSecuritySubscriptions unlocked");
-    return res;
-}
-
-void ClsSubs::addQuotesConsumer(ConnectionData *cd, QString sec, int id)
-{
-    sendStdoutLine(QString("ClsSubs#%1::addQuotesConsumer(%2, %3)").arg(this->className, sec).arg(id));
-    SecSubs *s;
-    mutex.lock();
-    {
-        if(securities.contains(sec))
-        {
-            sendStdoutLine("ClsSubs::addQuotesConsumer: security already exists");
-            s = securities.value(sec);
-        }
-        else
-        {
-            sendStdoutLine("ClsSubs::addQuotesConsumer: create new security");
-            s = new SecSubs(sec);
-            securities.insert(sec, s);
-        }
-    }
-    mutex.unlock();
-    // sendStdoutLine("ClsSubs::addQuotesConsumer unlocked");
-    s->addQuotesConsumer(cd, id);
-}
-
-bool ClsSubs::delQuotesConsumer(ConnectionData *cd, QString sec)
-{
-    // sendStdoutLine("ClsSubs::delQuotesConsumer lock");
-    mutex.lock();
-    if(securities.contains(sec))
-    {
-        if(securities.value(sec)->delQuotesConsumer(cd))
-            delete securities.take(sec);
-    }
-    bool res = securities.isEmpty();
-    mutex.unlock();
-    // sendStdoutLine("ClsSubs::delQuotesConsumer unlocked");
-    return res;
-}
-
-SecSubs::~SecSubs()
-{
-    //Здесь нельзя использовать локер использующий стек,
-    //потому-что он удаляется вместе с мьютексом на выходе из деструктора
-    // sendStdoutLine("SecSubs::~SecSubs lock");
-    pmutex.lock();
-    QStringList keys = params.keys();
-    foreach (QString par, keys)
-    {
-        delete params.take(par);
-    }
-    pmutex.unlock();
-    // sendStdoutLine("SecSubs::~SecSubs unlocked");
-}
-
-void SecSubs::addConsumer(ConnectionData *cd, QString param, int id)
-{
-    sendStdoutLine(QString("SecSubs#%1::addConsumer(%2, %3)").arg(this->secName, param).arg(id));
-    ParamSubs *p;
-    pmutex.lock();
-    {
-        if(params.contains(param))
-        {
-            sendStdoutLine("ParamSubscriptionsDb::addConsumer: param already exists");
-            p = params.value(param);
-        }
-        else
-        {
-            sendStdoutLine("ParamSubscriptionsDb::addConsumer: create new param");
-            p = new ParamSubs(param);
-            params.insert(param, p);
-        }
-    }
-    pmutex.unlock();
-    // sendStdoutLine("SecSubs::addConsumer unlocked");
-    p->addConsumer(cd, id);
-}
-
-bool SecSubs::delConsumer(ConnectionData *cd, QString param)
-{
-    // sendStdoutLine("SecSubs::delConsumer lock");
-    pmutex.lock();
-    if(params.contains(param))
-    {
-        sendStdoutLine(QString("SecSubs::delConsumer found param %1 in subscriptions").arg(param));
-        if(params.value(param)->delConsumer(cd))
-            delete params.take(param);
-    }
-    qmutex.lock();
-    bool res = (params.isEmpty() && quoteConsumers.isEmpty());
-    qmutex.unlock();
-    pmutex.unlock();
-    // sendStdoutLine("SecSubs::delConsumer unlocked");
-    return res;
-}
-
-bool SecSubs::clearAllSubscriptions(ConnectionData *cd)
-{
-    // sendStdoutLine("SecSubs::clearAllSubscriptions lock");
-    pmutex.lock();
-    QStringList toDel;
-    foreach (ParamSubs *p, params)
-    {
-        if(p->delConsumer(cd))
-            toDel.append(p->param);
-    }
-    while (!toDel.isEmpty())
-    {
-        QString pname = toDel.takeFirst();
-        delete params.take(pname);
-    }
-    qmutex.lock();
-    quoteConsumers.remove(cd);
-    bool res = (params.isEmpty() && quoteConsumers.isEmpty());
-    qmutex.unlock();
-    pmutex.unlock();
-    // sendStdoutLine("SecSubs::clearAllSubscriptions unlocked");
-    return res;
-}
-
-ParamSubs *SecSubs::findParamSubscriptions(QString param)
-{
-    ParamSubs *res = nullptr;
-    // sendStdoutLine("SecSubs::findParamSubscriptions lock");
-    pmutex.lock();
-    if(params.contains(param))
-        res = params.value(param);
-    pmutex.unlock();
-    // sendStdoutLine("SecSubs::findParamSubscriptions unlocked");
-    return res;
-}
-
-void SecSubs::addQuotesConsumer(ConnectionData *cd, int id)
-{
-    sendStdoutLine(QString("SecSubs#%1::addQuotesConsumer(%2)").arg(this->secName).arg(id));
-    qmutex.lock();
-    if(!quoteConsumers.contains(cd))
-        quoteConsumers.insert(cd, id);
-    qmutex.unlock();
-    // sendStdoutLine("SecSubs::addQuotesConsumer unlocked");
-}
-
-bool SecSubs::delQuotesConsumer(ConnectionData *cd)
-{
-    sendStdoutLine(QString("SecSubs#%1::delQuotesConsumer()").arg(this->secName));
-    qmutex.lock();
-    quoteConsumers.remove(cd);
-    pmutex.lock();
-    bool res = (params.isEmpty() && quoteConsumers.isEmpty());
-    pmutex.unlock();
-    qmutex.unlock();
-    // sendStdoutLine("SecSubs::delQuotesConsumer unlocked");
-    return res;
-}
-
-bool SecSubs::hasQuotesConsumer(ConnectionData *cd)
-{
-    // sendStdoutLine("SecSubs::hasQuotesConsumer lock");
-    qmutex.lock();
-    bool res;
-    if(cd)
-        res = quoteConsumers.contains(cd);
-    else
-        res = !quoteConsumers.isEmpty();
-    qmutex.unlock();
-    // sendStdoutLine("SecSubs::hasQuotesConsumer unlocked");
-    return res;
-}
-
-QStringList SecSubs::getParamsList()
-{
-    QStringList res;
-    // sendStdoutLine("SecSubs::getParamsList lock");
-    pmutex.lock();
-    res = params.keys();
-    pmutex.unlock();
-    // sendStdoutLine("SecSubs::getParamsList unlocked");
-    return res;
-}
-
-QList<ConnectionData *> SecSubs::getQuotesConsumersList()
-{
-    QList<ConnectionData *> res;
-    // sendStdoutLine("SecSubs::getQuotesConsumersList lock");
-    qmutex.lock();
-    res = quoteConsumers.keys();
-    qmutex.unlock();
-    // sendStdoutLine("SecSubs::getQuotesConsumersList unlocked");
-    return res;
-}
-
-int SecSubs::getQuotesSubscriptionId(ConnectionData *cd)
-{
-    int res = -1;
-    // sendStdoutLine("SecSubs::getQuotesSubscriptionId lock");
-    qmutex.lock();
-    if(quoteConsumers.contains(cd))
-        res = quoteConsumers.value(cd);
-    qmutex.unlock();
-    // sendStdoutLine("SecSubs::getQuotesSubscriptionId unlocked");
-    return res;
-}
-
-void ParamSubs::addConsumer(ConnectionData *cd, int id)
-{
-    // sendStdoutLine(QString("ParamSubs#%1::addConsumer(%2)").arg(this->param).arg(id));
-    mutex.lock();
-    if(!consumers.contains(cd))
-        consumers.insert(cd, id);
-    mutex.unlock();
-    // sendStdoutLine("ParamSubs::addConsumer unlocked");
-}
-
-bool ParamSubs::delConsumer(ConnectionData *cd)
-{
-    if(!cd)
-        return true;
-    sendStdoutLine(QString("ParamSubs#%1::delConsumer()").arg(this->param));
-    mutex.lock();
-    consumers.remove(cd);
-    bool res = consumers.isEmpty();
-    mutex.unlock();
-    // sendStdoutLine("ParamSubs::delConsumer unlocked");
-    return res;
-}
-
-bool ParamSubs::hasConsumer(ConnectionData *cd)
-{
-    // sendStdoutLine("ParamSubs::hasConsumer lock");
-    mutex.lock();
-    bool res = consumers.contains(cd);
-    mutex.unlock();
-    // sendStdoutLine("ParamSubs::hasConsumer unlocked");
-    return res;
-}
-
-QList<ConnectionData *> ParamSubs::consumersList()
-{
-    QList<ConnectionData *> res;
-    // sendStdoutLine("ParamSubs::consumersList lock");
-    mutex.lock();
-    res = consumers.keys();
-    mutex.unlock();
-    // sendStdoutLine("ParamSubs::consumersList unlocked");
-    return res;
-}
-
-int ParamSubs::getSubscriptionId(ConnectionData *cd)
-{
-    int res = -1;
-    // sendStdoutLine("ParamSubs::getSubscriptionId lock");
-    mutex.lock();
-    if(consumers.contains(cd))
-        res = consumers.value(cd);
-    mutex.unlock();
-    // sendStdoutLine("ParamSubs::getSubscriptionId unlocked");
-    return res;
-}
-
 
 void sendStdoutLine(QString line)
 {

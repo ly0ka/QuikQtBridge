@@ -1,16 +1,13 @@
 #ifndef JSONPROTOCOLHANDLER_H
 #define JSONPROTOCOLHANDLER_H
 
-#include <QtNetwork>
-#include <QAbstractSocket>
-#include <QTcpSocket>
-// #include <QMutex>
-#include <QObject>
-#include <QTimerEvent>
-//#include <QTextCodec>
 #include <QJsonDocument>
-#include <QFile>
+#include <QJsonObject>
+#include <QJsonArray>
+
+#include <QTcpSocket>
 #include <QTextStream>
+#include <QFile>
 
 class JsonProtocolHandler : public QObject
 {
@@ -18,16 +15,49 @@ class JsonProtocolHandler : public QObject
 public:
     JsonProtocolHandler(QTcpSocket * sock, QString logFileName=QString(), QObject *parent=0);
     ~JsonProtocolHandler();
-    int getSocketDescriptor();
-    QTcpSocket * getTcpSocket(){return socket;}
-    QAbstractSocket::SocketState getTcpSocketState(){return socket?socket->state():QAbstractSocket::UnconnectedState;}
-    QString peerAddressPort();
-    QHostAddress peerAddress();
-    quint16 peerPort();
-    QString lastErrorString();
 
-    void forceDisconnect();
     void safeAbort();
+    void forceDisconnect();
+    QString lastErrorString()
+    {
+        if(socket)
+            return socket->errorString();
+        return "There is no socket";
+    }
+
+    quint16 peerPort()
+    {
+        if(socket)
+            return socket->peerPort();;
+        return 0;
+    }
+    QString peerAddressPort()
+    {
+        if(socket)
+            return QString("%1:%2").arg(socket->peerAddress().toString()).arg(socket->peerPort());
+        return QString();
+    }
+    QHostAddress peerAddress()
+    {
+        if(socket)
+            return socket->peerAddress();
+        return QHostAddress();
+    }
+
+    int getSocketDescriptor()
+    {
+        if(socket)
+            return socket->socketDescriptor();
+        return 0;
+    }
+    QTcpSocket * getTcpSocket()
+    {
+        return socket;
+    }
+    QAbstractSocket::SocketState getTcpSocketState()
+    {
+        return socket ? socket->state() : QAbstractSocket::UnconnectedState;
+    }
 public slots:
     void sendReq(int id, QJsonValue data, bool showInLog=true);
     void sendAns(int id, QJsonValue data, bool showInLog=true);
@@ -37,12 +67,13 @@ private:
     QFile *logf;
     QTextStream *logts;
     QTcpSocket * socket;
-    bool peerEnded;
+
     bool weEnded;
+    bool peerEnded;
     QByteArray incommingBuf;
-    //QTextCodec *win1251;
-    void processBuffer();
+
     bool socketValid();
+    void processBuffer();
     void logIncoming(const QByteArray &msg);
     void logOutgoing(const QByteArray &msg);
 signals:
@@ -51,9 +82,9 @@ signals:
     void verArrived(int ver);
     void endArrived();
     void finished();
-    void error(QAbstractSocket::SocketError err);
+
     void parseError(QByteArray trash);
-    //void debugLog(QString msg);
+    void error(QAbstractSocket::SocketError err);
 private slots:
     void readyRead();
     void disconnected();

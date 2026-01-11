@@ -1,9 +1,10 @@
 #include "serverconfigreader.h"
-#include <QFileInfo>
-#include <QFile>
-#include <QDir>
+
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QFileInfo>
+#include <QDir>
 
 ServerConfigReader::ServerConfigReader(QString scriptPath)
 {
@@ -17,6 +18,7 @@ ServerConfigReader::ServerConfigReader(QString scriptPath)
 #ifdef QT_DEBUG
     qDebug() << "Json config path is" << jsonPath;
 #endif
+
     QFile jfile(jsonPath);
     if(jfile.open(QIODevice::ReadOnly))
     {

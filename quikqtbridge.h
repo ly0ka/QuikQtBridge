@@ -1,19 +1,20 @@
 #ifndef QUIKQTBRIDGE_H
 #define QUIKQTBRIDGE_H
 
-#include <QObject>
-#include <QMap>
-#include <QString>
 #include <lua.hpp>
+
+#include <QObject>
+#include <QString>
+#include <QMap>
 
 class QuikCallbackHandler
 {
 public:
-    virtual void callbackRequest(QString name, const QVariantList &args, QVariant &vres) = 0;
-    virtual void fastCallbackRequest(void *data, const QVariantList &args, QVariant &res) = 0;
-    virtual void clearFastCallbackData(void *data) = 0;
     virtual void sendStdoutLine(QString line) = 0;
     virtual void sendStderrLine(QString line) = 0;
+    virtual void clearFastCallbackData(void *data) = 0;
+    virtual void callbackRequest(QString name, const QVariantList &args, QVariant &vres) = 0;
+    virtual void fastCallbackRequest(void *data, const QVariantList &args, QVariant &res) = 0;
 };
 
 struct BridgeCallableObject
@@ -39,19 +40,20 @@ public:
     static QuikQtBridge *initQuikQtBridge();
     static void deinitQuikQtBridge();
 
+    void getVariable(QString varname, QVariant &res);
+    void setRecentStack(Qt::HANDLE ctid, lua_State *l);
+    lua_State *getRecentStackForThreadId(Qt::HANDLE ctid);
+
+    bool registerCallback(QuikCallbackHandler *handler, QString name);
+    void callbackRequest(QString name, const QVariantList &args, QVariant &vres);
+
     void invokeMethod(QString method, const QVariantList &args, QVariantList &res, QuikCallbackHandler *errOut);
     void invokeObjectMethod(int objid, QString method, const QVariantList &args, QVariantList &res, QuikCallbackHandler *errOut);
     void deleteObject(int objid);
-    bool registerCallback(QuikCallbackHandler *handler, QString name);
-    void getVariable(QString varname, QVariant &res);
-
-    lua_State *getRecentStackForThreadId(Qt::HANDLE ctid);
-    void setRecentStack(Qt::HANDLE ctid, lua_State *l);
-    void callbackRequest(QString name, const QVariantList &args, QVariant &vres);
 private:
     static QuikQtBridge *global_bridge;
-    QMap<QString, QuikCallbackHandler *> m_handlers;
     QMap<Qt::HANDLE, lua_State *> recentStackMap;
+    QMap<QString, QuikCallbackHandler *> m_handlers;
 
     explicit QuikQtBridge();
     ~QuikQtBridge();

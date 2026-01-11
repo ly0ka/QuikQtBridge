@@ -1,10 +1,9 @@
 #ifndef QUIKCOAST_H
 #define QUIKCOAST_H
 
-#include <QString>
-#include <QVariant>
-#include <QVariantList>
 #include <lua.hpp>
+
+#include <QVariantList>
 
 int luaopenImp(lua_State *l);
 bool getQuikVariable(QString varname, QVariant &res);
