@@ -706,7 +706,7 @@ void BridgeTCPServer::protoReqArrived(int id, QJsonValue data)
             {
                 QVariant carg = oargs[k];
                 bool isCallable = false;
-                if(carg.type() == QVariant::Map)
+                if(carg.typeId() == QMetaType::QVariantMap)
                 {
                     QVariantMap pcabl = carg.toMap();
                     if(pcabl.contains("type") && pcabl.value("type").toString()=="callable")

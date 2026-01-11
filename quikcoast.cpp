@@ -3,8 +3,6 @@
 
 #include <QDebug>
 #include <QThread>
-#include <string.h>
-//#include <processthreadsapi.h>
 
 #define JUMP_TABLE_SIZE 100
 
@@ -395,37 +393,37 @@ static int extractValueFromLuaStack(lua_State *l, int sid, QVariant &sVal, QVari
 
 void pushVariantToLuaStack(lua_State *l, QVariant val, QString caller)
 {
-    switch(val.type())
+    switch(val.typeId())
     {
-    case QVariant::Bool:
+    case QMetaType::Bool:
     {
         bool v = val.toBool();
         lua_pushboolean(l, v);
         break;
     }
-    case QVariant::Int:
-    case QVariant::UInt:
-    case QVariant::LongLong:
-    case QVariant::ULongLong:
+    case QMetaType::Int:
+    case QMetaType::UInt:
+    case QMetaType::LongLong:
+    case QMetaType::ULongLong:
     {
         qlonglong v = val.toLongLong();
         lua_pushinteger(l, v);
         break;
     }
-    case QVariant::String:
+    case QMetaType::QString:
     {        
         QString v = val.toString();
         //qDebug() << "push string arg:" << v;
         lua_pushstring(l, v.toLocal8Bit().data());
         break;
     }
-    case QVariant::Double:
+    case QMetaType::Double:
     {
         double v = val.toDouble();
         lua_pushnumber(l, v);
         break;
     }
-    case QVariant::Map:
+    case QMetaType::QVariantMap:
     {
         QVariantMap tbl = val.toMap();
         lua_newtable(l);
@@ -445,7 +443,7 @@ void pushVariantToLuaStack(lua_State *l, QVariant val, QString caller)
         }
         break;
     }
-    case QVariant::List:
+    case QMetaType::QVariantList:
     {
         QVariantList lst = val.toList();
         lua_newtable(l);
@@ -745,7 +743,7 @@ static int universalCallbackHandler(JumpTableItem *jitem, lua_State *l)
     int rescnt = 0;
     if(!vres.isNull())
     {
-        if(vres.type() == QVariant::List)
+        if(vres.typeId() == QMetaType::QVariantList)
         {
             //special case: multiple results
             QVariantList lst = vres.toList();

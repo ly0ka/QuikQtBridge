@@ -1,49 +1,67 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.26)
+
+# Set project
 set (QuikQtPluginLib "QuikQtBridge")
 string(TOUPPER ${QuikQtPluginLib} UCASELIBNAME)
 
 project(${QuikQtPluginLib} LANGUAGES CXX)
 
-set(CMAKE_VERBOSE_MAKEFILE ON)
-set(CMAKE_INCLUDE_CURRENT_DIR ON)
+# Set Qt properties
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
+
+# Set C++ properties
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_FLAGS_RELEASE "/MT")
-set(CMAKE_CXX_FLAGS_DEBUG "/MTd /Zi")
+set(CMAKE_CXX_FLAGS_RELEASE "/MD")
+set(CMAKE_CXX_FLAGS_DEBUG "/MD")
 
-find_package(QT NAMES Qt6 Qt5 COMPONENTS Core REQUIRED)
-find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Core REQUIRED)
-find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Network REQUIRED)
+# Set CMAKE properties
+set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-configure_file(
-    quikcoastbootstrap.h.in
-    generated/quikcoastbootstrap.h
-    @ONLY
-    )
+# Find packages
+find_package(Qt6 REQUIRED COMPONENTS Core Network)
+
+qt_standard_project_setup()
 
 configure_file(
-    quikcoastbootstrap.cpp.in
-    generated/quikcoastbootstrap.cpp
-    @ONLY
-    )
+  quikcoastbootstrap.h.in
+  generated/quikcoastbootstrap.h
+  @ONLY
+)
 
-qt5_wrap_cpp(moc_files bridgetcpserver.h jsonprotocolhandler.h)
+configure_file(
+  quikcoastbootstrap.cpp.in
+  generated/quikcoastbootstrap.cpp
+  @ONLY
+)
+
+# Set library files
+set(lib_files
+  qtmain.cpp
+
+  quikcoast.h
+  quikcoast.cpp
+
+  quikqtbridge.h
+  quikqtbridge.cpp
+
+  serverconfigreader.h
+  serverconfigreader.cpp
+
+  bridgetcpserver.cpp
+  jsonprotocolhandler.cpp
+)
+
+qt_wrap_cpp(moc_files
+  bridgetcpserver.h
+  jsonprotocolhandler.h
+)
 
 add_library(${QuikQtPluginLib} SHARED
   QuikQtBridge_global.h
-  quikqtbridge.cpp
-  quikqtbridge.h
-  quikcoast.h
-  quikcoast.cpp
-  qtmain.cpp
-  bridgetcpserver.cpp
-  jsonprotocolhandler.cpp
-  serverconfigreader.h
-  serverconfigreader.cpp
-  ${moc_files}
+  ${lib_files} ${moc_files}
   ${CMAKE_CURRENT_BINARY_DIR}/generated/quikcoastbootstrap.cpp
 )
 
@@ -54,9 +72,6 @@ target_compile_definitions(${QuikQtPluginLib} PRIVATE ${UCASELIBNAME}_LIBRARY)
 target_compile_definitions(${QuikQtPluginLib} PRIVATE QUIK_QT_PLUGIN_LIB_NAME=${QuikQtPluginLib})
 
 target_include_directories(${QuikQtPluginLib} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
-#target_include_directories(${QuikQtPluginLib} PRIVATE "c:/Work/lua-5.3.6_Win64_dll16_lib/include")
-#target_link_directories(${QuikQtPluginLib} PRIVATE "c:/Work/lua-5.3.6_Win64_dll16_lib/fromquik")
-#target_link_libraries(${QuikQtPluginLib} PRIVATE lua53)
-target_include_directories(${QuikQtPluginLib} PRIVATE "D:/Work/Trade/lua-5.4.2-win64-libs/include")
-target_link_directories(${QuikQtPluginLib} PRIVATE "D:/Work/Trade/lua-5.4.2-win64-libs/fromquik")
+target_include_directories(${QuikQtPluginLib} PRIVATE "C:/Dev/Quik/Lua-5.4.2/include")
+target_link_directories(${QuikQtPluginLib} PRIVATE "C:/Dev/Quik/Lua-5.4.2/fromquik")
 target_link_libraries(${QuikQtPluginLib} PRIVATE lua54)
