@@ -112,7 +112,10 @@ void BridgeTCPServer::callbackRequest(QString name, const QVariantList &args, QV
         if(cd->callbackSubscriptions.contains(name))
         {
             int id = cd->callbackSubscriptions.value(name);
-            cd->proto->sendReq(id, cbCall, false);
+            QMetaObject::invokeMethod(cd->proto, "sendReq", Qt::QueuedConnection,
+                                      Q_ARG(int, id),
+                                      Q_ARG(QJsonValue, cbCall),
+                                      Q_ARG(bool, false));
         }
     }
     if(name == "OnStop")
@@ -178,7 +181,10 @@ void BridgeTCPServer::sendError(ConnectionData *cd, int id, int errcode, QString
     if(log)
         sendStderrLine(errmsg);
     if(cd)
-        cd->proto->sendAns(id, errObj, log);
+        QMetaObject::invokeMethod(cd->proto, "sendAns", Qt::QueuedConnection,
+                                  Q_ARG(int, id),
+                                  Q_ARG(QJsonValue, errObj),
+                                  Q_ARG(bool, log));
 }
 
 
@@ -228,7 +234,8 @@ void BridgeTCPServer::incomingConnection(qintptr handle)
 void BridgeTCPServer::connectionEstablished(ConnectionData *cd)
 {
     m_connections.append(cd);
-    cd->proto->sendVer(BRIDGE_SERVER_PROTOCOL_VERSION);
+    QMetaObject::invokeMethod(cd->proto, "sendVer", Qt::QueuedConnection,
+                              Q_ARG(int, BRIDGE_SERVER_PROTOCOL_VERSION));
     cd->versionSent = true;
 }
 
@@ -285,7 +292,10 @@ void BridgeTCPServer::protoReqArrived(int id, QJsonValue data)
             {"method", "registered"},
             {"callback", callbackName}
         };
-        cd->proto->sendAns(id, regRes, false);
+        QMetaObject::invokeMethod(cd->proto, "sendAns", Qt::QueuedConnection,
+                                  Q_ARG(int, id),
+                                  Q_ARG(QJsonValue, regRes),
+                                  Q_ARG(bool, false));
         return;
     }
     if(method == "invoke")
@@ -360,7 +370,10 @@ void BridgeTCPServer::protoReqArrived(int id, QJsonValue data)
             {"method", "return"},
             {"result", QJsonArray::fromVariantList(res)}
         };
-        cd->proto->sendAns(id, invRes, false);
+        QMetaObject::invokeMethod(cd->proto, "sendAns", Qt::QueuedConnection,
+                                  Q_ARG(int, id),
+                                  Q_ARG(QJsonValue, invRes),
+                                  Q_ARG(bool, false));
         return;
     }
     if(method == "delete")
@@ -377,7 +390,10 @@ void BridgeTCPServer::protoReqArrived(int id, QJsonValue data)
                 {"object", objId}
             };
             cd->objRefs.removeAll(objId);
-            cd->proto->sendAns(id, delRes, false);
+            QMetaObject::invokeMethod(cd->proto, "sendAns", Qt::QueuedConnection,
+                                      Q_ARG(int, id),
+                                      Q_ARG(QJsonValue, delRes),
+                                      Q_ARG(bool, false));
             return;
         }
         else
@@ -431,7 +447,8 @@ void BridgeTCPServer::protoVerArrived(int ver)
         cd->peerProtocolVersion = ver;
         if(!cd->versionSent)
         {
-            cd->proto->sendVer(BRIDGE_SERVER_PROTOCOL_VERSION);
+            QMetaObject::invokeMethod(cd->proto, "sendVer", Qt::QueuedConnection,
+                                      Q_ARG(int, BRIDGE_SERVER_PROTOCOL_VERSION));
             cd->versionSent = true;
         }
     }
@@ -489,7 +506,10 @@ void BridgeTCPServer::fastCallbackRequestHandler(ConnectionData *cd, int oid, QS
             invReq["object"] = oid;
         int id = ++(cd->outMsgId);
         cd->fcbWaitResult->fastCallbackRequestSent(cd, oid, fname, id);
-        cd->proto->sendReq(id, invReq, false);
+        QMetaObject::invokeMethod(cd->proto, "sendReq", Qt::QueuedConnection,
+                                  Q_ARG(int, id),
+                                  Q_ARG(QJsonValue, invReq),
+                                  Q_ARG(bool, false));
     }
 }
 
